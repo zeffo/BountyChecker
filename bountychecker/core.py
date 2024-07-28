@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from typing import Any, Protocol
+import pydantic
 from watchdog.observers import Observer
 from watchdog.events import (
     FileModifiedEvent,
@@ -14,8 +15,11 @@ from .bounties import BountyCondition, BOUNTY_START, Bounty
 class BaseLogFileHandler(Protocol):
     config: Config
     path: Path
+    bc: "BountyChecker"
 
-    def __init__(self, path: Path, *, config: Config):
+    def __init__(self, path: Path, *, bounty_checker: "BountyChecker"):
+        self.bc = bounty_checker
+        self.config = bounty_checker.config
         self.path = path
 
     def parse(self) -> Any:
@@ -31,16 +35,17 @@ class BaseLogFileHandler(Protocol):
         raise NotImplementedError
 
 
-class LogFileEventHandler(FileSystemEventHandler):
+class LogFileEventHandler(BaseLogFileHandler, FileSystemEventHandler):
 
-    def __init__(self, path: Path, *, config: Config) -> None:
-        self.config = config
+    def __init__(self, path: Path, *, bounty_checker: "BountyChecker") -> None:
         self.path = path
+        self.bc = bounty_checker
+        self.config = bounty_checker.config
         self._seek_settings = (
             0,
             2,
         )  # initially, seek to end. After, seek to (offset, 0)
-        super().__init__()
+        super().__init__(path, bounty_checker=bounty_checker)
 
     def on_modified(self, event: FileSystemEvent):
         if isinstance(event, FileModifiedEvent):
@@ -56,6 +61,8 @@ class LogFileEventHandler(FileSystemEventHandler):
         if matches := BOUNTY_START.findall(data):
             try:
                 bounty = Bounty(**json.loads(matches[-1]))
+            except pydantic.ValidationError:
+                return
             except json.JSONDecodeError:
                 # Sometimes watchdog calls on_modified during a partial write.
                 # In that event, we should preserve the old seek settings so we can read the correct data on the complete write.
@@ -69,7 +76,7 @@ class LogFileEventHandler(FileSystemEventHandler):
             conditions.append(BountyCondition.IS_STEEL_PATH)
         if not all(job in self.config.wanted_bounties for job in bounty.jobStages):
             conditions.append(BountyCondition.HAS_INCORRECT_STAGES)
-        if bounty.tier != 4:
+        if bounty.tier != 5:
             conditions.append(BountyCondition.IS_WRONG_TIER)
 
         return conditions
@@ -109,7 +116,7 @@ class BountyChecker:
     def __init__(self, config: Config, event_handler: type[BaseLogFileHandler]):
         self.config = config
         self.observer = Observer()
-        self.event_handler = event_handler(self.config.log_path, config=config)
+        self.event_handler = event_handler(self.config.log_path, bounty_checker=self)
 
     def schedule(self):
         self.observer.schedule(self.event_handler, self.config.log_path)  # type: ignore

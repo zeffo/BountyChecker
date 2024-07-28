@@ -21,9 +21,9 @@ class Bounty(pydantic.BaseModel):
         return self.isHardJob
 
     def __str__(self) -> str:
-        stages = "\n- ".join(BOUNTIES.get(b, b) for b in self.jobStages)
+        stages = " → ".join(BOUNTIES.get(b, b) for b in self.jobStages)
         steel_path = "(Steel Path)" if self.is_steel_path() else ""
-        return f"Tier {self.jobTier} Bounty {steel_path}\nStages:\n- {stages}"
+        return f"Tier {self.tier} Bounty {steel_path}\n{stages}"
 
     @property
     def tier(self) -> int:
